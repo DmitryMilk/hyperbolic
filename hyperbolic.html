@@ -10,6 +10,9 @@ const zFar = 1000
 
 const tickRate = 50
 
+// Allowed names: KeyX/Space/Enter/Backspace/Tab/CapsLock/ShiftLeft/ControlLeft and other for keybord,
+//                MouseButton0/MouseButton1/MouseButton2 and other for mouse butons
+//                MouseWheelUp/MuseWheelDown for mouse wheel
 const actionForward = 'KeyE'
 const actionBackward = 'KeyD'
 const actionLeft = 'KeyS'
@@ -18,6 +21,10 @@ const actionUp = 'KeyQ'
 const actionDown = 'KeyA'
 const actionRollCCW = 'KeyW'
 const actionRollCW = 'KeyR'
+const actionYawRight = 'KeyC'
+const actionYawLeft = 'KeyX'
+const actionPitchUp = 'MouseWheelDown'
+const actionPitchDown = 'MouseWheelUp'
 
 const inertia = 4
 const rotationInertia = 4
@@ -26,6 +33,8 @@ const maxSpeed = 0.5
 const maxSideSpeed = 0.1
 const maxVerticalSpeed = 0.1
 const maxRollSpeed = 0.03
+const maxYawSpeed = 0.03
+const maxPitchSpeed = 0.03
 const yawSensitivity = 0.001
 const pitchSensitivity = 0.001
 
@@ -453,43 +462,36 @@ function setupProjection(gl) {
 function movePlayer(state) {
     var changed = false
     
-    let speedDelta = (state.acceleration - state.speed) * inertialCoef
-    if ( Math.abs(speedDelta) > maxSpeed * deltaThreshold ) state.speed += speedDelta
-    else state.speed = state.acceleration
-    
-    let sideSpeedDelta = (state.sideAcceleration - state.sideSpeed) * inertialCoef
-    if ( Math.abs(sideSpeedDelta) > maxSideSpeed * deltaThreshold ) state.sideSpeed += sideSpeedDelta
-    else state.sideSpeed = state.sideAcceleration
-    
-    let verticalSpeedDelta = (state.verticalAcceleration - state.verticalSpeed) * inertialCoef
-    if ( Math.abs(verticalSpeedDelta) > maxVerticalSpeed * deltaThreshold ) state.verticalSpeed += verticalSpeedDelta
-    else state.verticalSpeed = state.verticalAcceleration
-
-    if ( Math.abs(state.speed) > 0 || Math.abs(state.sideSpeed) > 0 || Math.abs(state.verticalSpeed) > 0 ) {
-        translate(state.viewMatrix, -state.sideSpeed, -state.verticalSpeed, state.speed)
-        changed = true
+    for ( let movement of Object.values(state.movement) ) {
+        let delta = (movement.acceleration - movement.speed) * movement.inertialCoef
+        if ( Math.abs(delta) > movement.limit * deltaThreshold ) movement.speed += delta
+        else movement.speed = movement.acceleration
+        
+        if ( Math.abs(movement.speed) > 0 ) changed = true
     }
     
-    let rollSpeedDelta = (state.rollAcceleration - state.rollSpeed) * rotationInertialCoef
-    if ( Math.abs(rollSpeedDelta) > maxRollSpeed * deltaThreshold ) {
-        state.rollSpeed += rollSpeedDelta
-        rotate(state.viewMatrix, 0, 1, state.rollSpeed)
-        changed = true
-    } else state.rollSpeed = 0
-    
-    let yawDelta = state.yawAdvance * mouseInertialCoef
-    if ( Math.abs(yawDelta) > deltaThreshold ) {
-        state.yawAdvance -= yawDelta
-        rotate(state.viewMatrix, 2, 0, yawDelta*yawSensitivity)
-        changed = true
-    } else state.yawAdvance = 0
-    
-    let pitchDelta = state.pitchAdvance * mouseInertialCoef
-    if ( Math.abs(pitchDelta) > deltaThreshold ) {
-        state.pitchAdvance -= pitchDelta
-        rotate(state.viewMatrix, 1, 2, pitchDelta*pitchSensitivity)
-        changed = true
-    } else state.pitchAdvance = 0
+    if ( changed ) {
+        translate(
+            state.viewMatrix,
+            -state.movement.side.speed, 
+            -state.movement.vertical.speed,
+            -state.movement.along.speed,
+        )
+        rotate(state.viewMatrix, 0, 1, -state.movement.roll.speed)
+        rotate(state.viewMatrix, 0, 2, -state.movement.yaw.speed * yawSensitivity)
+        rotate(state.viewMatrix, 1, 2, -state.movement.pitch.speed * pitchSensitivity)
+        
+        /*
+        console.log(
+            state.movement.along.speed,
+            state.movement.side.speed,
+            state.movement.vertical.speed,
+            state.movement.roll.speed,
+            state.movement.yaw.speed,
+            state.movement.pitch.speed,
+        )
+        */
+    }
     
     return changed
 }
@@ -498,65 +500,83 @@ function movePlayer(state) {
 function onMouseMove(event, state) {
     let deltaX = event.clientX - state.prevMouseX
     state.prevMouseX = event.clientX
-    state.yawAdvance += deltaX
+    state.movement.yaw.speed += deltaX
     
     let deltaY = event.clientY - state.prevMouseY
     state.prevMouseY = event.clientY
-    state.pitchAdvance += deltaY
+    state.movement.pitch.speed -= deltaY
 }
 
 //--------------------------------------------------------------
-function startAction(eventName, state) {
-    if ( eventName == actionForward ) {
-        state.acceleration = maxSpeed
-    }
-    
-    if ( eventName == actionBackward ) {
-        state.acceleration = -maxSpeed
-    }
-    
-    if ( eventName == actionLeft ) {
-        state.sideAcceleration = -maxSideSpeed
-    }
-    
-    if ( eventName == actionRight ) {
-        state.sideAcceleration = maxSideSpeed
-    }
-    
-    if ( eventName == actionUp ) {
-        state.verticalAcceleration = maxVerticalSpeed
-    }
-    
-    if ( eventName == actionDown ) {
-        state.verticalAcceleration = -maxVerticalSpeed
-    }
-    
-    if ( eventName == actionRollCCW ) {
-        state.rollAcceleration = -maxRollSpeed
-    }
-    
-    if ( eventName == actionRollCW ) {
-        state.rollAcceleration = maxRollSpeed
+function processAction(type, eventName, state, amount) {
+    for ( let movement of Object.values(state.movement) ) {
+        var sign = 0
+        if ( eventName == movement.positiveAction ) sign = 1
+        else if ( eventName == movement.negativeAction ) sign = -1
+        else continue
+        
+        if ( type == 'press' ) {
+            movement.acceleration = movement.limit * sign
+        } else if ( type == 'release' && Math.sign(movement.acceleration) == sign ) {
+            movement.acceleration = 0
+        } else {
+            movement.speed += amount * sign * movement.limit
+        }
     }
 }
 
 //--------------------------------------------------------------
-function endAction(eventName, state) {
-    if ( eventName == actionForward || eventName == actionBackward ) {
-        state.acceleration = 0
+function createInitialState() {
+    let state = {
+        prevMouseX: null,
+        prevMouseY: null,
+        viewMatrix: identity(),
+        movement: {
+            along: {
+                positiveAction: actionBackward,
+                negativeAction: actionForward,
+                inertialCoef: inertialCoef,
+                limit: maxSpeed,
+            },
+            side: {
+                positiveAction: actionRight,
+                negativeAction: actionLeft,
+                inertialCoef: inertialCoef,
+                limit: maxSideSpeed,
+            },
+            vertical: {
+                positiveAction: actionUp,
+                negativeAction: actionDown,
+                inertialCoef: inertialCoef,
+                limit: maxVerticalSpeed,
+            },
+            roll: {
+                positiveAction: actionRollCCW,
+                negativeAction: actionRollCW,
+                inertialCoef: rotationInertialCoef,
+                limit: maxRollSpeed,
+            },
+            yaw: {
+                positiveAction: actionYawRight,
+                negativeAction: actionYawLeft,
+                inertialCoef: mouseInertialCoef,
+                limit: maxYawSpeed / yawSensitivity,
+            },
+            pitch: {
+                inertialCoef: mouseInertialCoef,
+                limit: maxPitchSpeed / pitchSensitivity,
+                positiveAction: actionPitchUp,
+                negativeAction: actionPitchDown,
+            },
+        }
     }
     
-    if ( eventName == actionLeft || eventName == actionRight ) {
-        state.sideAcceleration = 0
+    for ( let movement of Object.values(state.movement) ) {
+        movement.speed = 0
+        movement.acceleration = 0
     }
     
-    if ( eventName == actionUp || eventName == actionDown ) {
-        state.verticalAcceleration = 0
-    }
-    
-    if ( eventName == actionRollCCW || eventName == actionRollCW ) {
-        state.rollAcceleration = 0
-    }
+    return state
 }
 
 //--------------------------------------------------------------
@@ -572,21 +592,8 @@ function main() {
     
     let world = new World(worldProgram)
     
-    let state = { 
-        prevMouseX: null,
-        prevMouseY: null,
-        viewMatrix: identity(),
-        speed: 0,
-        acceleration: 0,
-        sideSpeed: 0,
-        sideAcceleration: 0,
-        verticalSpeed: 0,
-        verticalAcceleration: 0,
-        rollSpeed: 0,
-        rollAcceleration: 0,
-        yawAdvance: 0,
-        pitchAdvance: 0,
-    }
+    let state = createInitialState()
+    
     translate(state.viewMatrix, 0, 0, -10)
     
     let mouseMoveHandler = (event) => onMouseMove(event, state)
@@ -600,7 +607,7 @@ function main() {
             canvas.addEventListener('pointermove', mouseMoveHandler)
             canvas.setPointerCapture(event.pointerId)
         } else {
-            startAction(`MouseButton${event.button}`, state)
+            processAction('press', `MouseButton${event.button}`, state)
         }
         
         event.preventDefault()
@@ -613,15 +620,19 @@ function main() {
             canvas.removeEventListener('pointermove', mouseMoveHandler)
             canvas.releasePointerCapture(event.pointerId)
         } else {
-            endAction(`MouseButton${event.button}`, state)
+            processAction('release', `MouseButton${event.button}`, state)
         }
         
         event.preventDefault()
     })
     
-    document.addEventListener('keydown', (event) => startAction(event.code, state))
+    document.addEventListener('wheel', (event) => {
+        processAction('advance', event.deltaY < 0 ? 'MouseWheelUp' : 'MouseWheelDown' , state, Math.abs(event.deltaY / 120) )
+    })
     
-    document.addEventListener('keyup', (event) => endAction(event.code, state))
+    document.addEventListener('keydown', (event) => processAction('press', event.code, state))
+    
+    document.addEventListener('keyup', (event) => processAction('release', event.code, state))
     
     let draw = () => {
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
@@ -645,7 +656,7 @@ function main() {
 </script>
 </head>
 
-<body onload="main()">
+<body onload="main()" onscroll="return false">
     <canvas id="canvas" width="800" height="600" oncontextmenu="return false"></canvas>
 </body>
 </html>
