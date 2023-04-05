@@ -4,9 +4,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script>
 
-fovToScreen = 30
+const fovToScreen = 30
 const zNear = 5
 const zFar = 1000
+
+const tickRate = 50
 
 const keyForward = 'KeyE'
 const keyBackward = 'KeyD'
@@ -33,6 +35,7 @@ const deltaThreshold = 0.001
 const inertialCoef = 1 / (1 + inertia)
 const mouseInertialCoef = 1 / (1 + mouseInertia)
 const rotationInertialCoef = 1 / (1 + rotationInertia)
+const msecPerTick = 1000 / tickRate
 //--------------------------------------------------------------
 let vertexShaderSrc = `
 attribute vec4 pos;
@@ -423,7 +426,6 @@ class World {
         gl.useProgram(this.program.program)
         gl.uniformMatrix4fv(this.program.uniforms.transform, false, mulMatrix(viewMatrix, gl.projectionMatrix))
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer)
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
         gl.drawElements(gl.TRIANGLES, this.N, gl.UNSIGNED_SHORT, 0)
     }
 }
@@ -445,6 +447,96 @@ function setupProjection(gl) {
         zNear,
         zFar
     )
+}
+
+//--------------------------------------------------------------
+function movePlayer(state) {
+    var changed = false
+    
+    let speedDelta = (state.acceleration - state.speed) * inertialCoef
+    if ( Math.abs(speedDelta) > maxSpeed * deltaThreshold ) state.speed += speedDelta
+    else state.speed = state.acceleration
+    
+    let sideSpeedDelta = (state.sideAcceleration - state.sideSpeed) * inertialCoef
+    if ( Math.abs(sideSpeedDelta) > maxSideSpeed * deltaThreshold ) state.sideSpeed += sideSpeedDelta
+    else state.sideSpeed = state.sideAcceleration
+    
+    let verticalSpeedDelta = (state.verticalAcceleration - state.verticalSpeed) * inertialCoef
+    if ( Math.abs(verticalSpeedDelta) > maxVerticalSpeed * deltaThreshold ) state.verticalSpeed += verticalSpeedDelta
+    else state.verticalSpeed = state.verticalAcceleration
+
+    if ( Math.abs(state.speed) > 0 || Math.abs(state.sideSpeed) > 0 || Math.abs(state.verticalSpeed) > 0 ) {
+        translate(state.viewMatrix, -state.sideSpeed, -state.verticalSpeed, state.speed)
+        changed = true
+    }
+    
+    let rollSpeedDelta = (state.rollAcceleration - state.rollSpeed) * rotationInertialCoef
+    if ( Math.abs(rollSpeedDelta) > maxRollSpeed * deltaThreshold ) {
+        state.rollSpeed += rollSpeedDelta
+        rotate(state.viewMatrix, 0, 1, state.rollSpeed)
+        changed = true
+    } else state.rollSpeed = 0
+    
+    let yawDelta = state.yawAdvance * mouseInertialCoef
+    if ( Math.abs(yawDelta) > deltaThreshold ) {
+        state.yawAdvance -= yawDelta
+        rotate(state.viewMatrix, 2, 0, yawDelta*yawSensitivity)
+        changed = true
+    } else state.yawAdvance = 0
+    
+    let pitchDelta = state.pitchAdvance * mouseInertialCoef
+    if ( Math.abs(pitchDelta) > deltaThreshold ) {
+        state.pitchAdvance -= pitchDelta
+        rotate(state.viewMatrix, 1, 2, pitchDelta*pitchSensitivity)
+        changed = true
+    } else state.pitchAdvance = 0
+    
+    return changed
+}
+
+//--------------------------------------------------------------
+function onMouseMove(event, state) {
+    let deltaX = event.clientX - state.prevMouseX
+    state.prevMouseX = event.clientX
+    state.yawAdvance += deltaX
+    
+    let deltaY = event.clientY - state.prevMouseY
+    state.prevMouseY = event.clientY
+    state.pitchAdvance += deltaY
+}
+
+//--------------------------------------------------------------
+function onKeyDown(event, state) {
+    if ( event.code == keyForward ) {
+        state.acceleration = maxSpeed
+    } else if ( event.code == keyBackward ) {
+        state.acceleration = -maxSpeed
+    } else if ( event.code == keyLeft ) {
+        state.sideAcceleration = -maxSideSpeed
+    } else if ( event.code == keyRight ) {
+        state.sideAcceleration = maxSideSpeed
+    } else if ( event.code == keyUp ) {
+        state.verticalAcceleration = maxVerticalSpeed
+    } else if ( event.code == keyDown ) {
+        state.verticalAcceleration = -maxVerticalSpeed
+    } else if ( event.code == keyRollCCW ) {
+        state.rollAcceleration = -maxRollSpeed
+    } else if ( event.code == keyRollCW ) {
+        state.rollAcceleration = maxRollSpeed
+    }
+}
+
+//--------------------------------------------------------------
+function onKeyUp(event, state) {
+    if ( event.code == keyForward || event.code == keyBackward ) {
+        state.acceleration = 0
+    } else if ( event.code == keyLeft || event.code == keyRight ) {
+        state.sideAcceleration = 0
+    } else if ( event.code == keyUp || event.code == keyDown ) {
+        state.verticalAcceleration = 0
+    } else if ( event.code == keyRollCCW || event.code == keyRollCW ) {
+        state.rollAcceleration = 0
+    }
 }
 
 //--------------------------------------------------------------
@@ -477,104 +569,41 @@ function main() {
     }
     translate(state.viewMatrix, 0, 0, -10)
     
-    world.draw(state)
-    
-    setInterval(
-        () => {
-            let speedDelta = (state.acceleration - state.speed) * inertialCoef
-            if ( Math.abs(speedDelta) > maxSpeed * deltaThreshold ) state.speed += speedDelta
-            else state.speed = state.acceleration
-            
-            let sideSpeedDelta = (state.sideAcceleration - state.sideSpeed) * inertialCoef
-            if ( Math.abs(sideSpeedDelta) > maxSideSpeed * deltaThreshold ) state.sideSpeed += sideSpeedDelta
-            else state.sideSpeed = state.sideAcceleration
-            
-            let verticalSpeedDelta = (state.verticalAcceleration - state.verticalSpeed) * inertialCoef
-            if ( Math.abs(verticalSpeedDelta) > maxVerticalSpeed * deltaThreshold ) state.verticalSpeed += verticalSpeedDelta
-            else state.verticalSpeed = state.verticalAcceleration
-            
-            let rollSpeedDelta = (state.rollAcceleration - state.rollSpeed) * rotationInertialCoef
-            if ( Math.abs(rollSpeedDelta) > maxRollSpeed * deltaThreshold ) {
-                state.rollSpeed += rollSpeedDelta
-                rotate(state.viewMatrix, 0, 1, state.rollSpeed)
-            } else state.rollSpeed = 0
-            
-            let yawDelta = state.yawAdvance * mouseInertialCoef
-            if ( Math.abs(yawDelta) > deltaThreshold ) {
-                state.yawAdvance -= yawDelta
-                rotate(state.viewMatrix, 2, 0, yawDelta*yawSensitivity)
-            } else state.yawAdvance = 0
-            
-            let pitchDelta = state.pitchAdvance * mouseInertialCoef
-            if ( Math.abs(pitchDelta) > deltaThreshold ) {
-                state.pitchAdvance -= pitchDelta
-                rotate(state.viewMatrix, 1, 2, pitchDelta*pitchSensitivity)
-            } else state.pitchAdvance = 0
-            
-            if ( Math.abs(state.speed) > 0 || Math.abs(state.sideSpeed) > 0 || Math.abs(state.verticalSpeed) > 0 ||
-                 Math.abs(yawDelta) > 0 || Math.abs(pitchDelta) > 0 || Math.abs(state.rollSpeed) > 0
-            ) {
-                translate(state.viewMatrix, -state.sideSpeed, -state.verticalSpeed, state.speed)
-                requestAnimationFrame(() => world.draw(state))
-                // console.log(state.speed, state.sideSpeed, state.verticalSpeed, yawDelta, pitchDelta, state.rollSpeed)
-            }
-        }, 20
-    )
-    
-    let changeView = (event) => {
-        let deltaX = event.clientX - state.prevMouseX
-        state.prevMouseX = event.clientX
-        state.yawAdvance += deltaX
-        
-        let deltaY = event.clientY - state.prevMouseY
-        state.prevMouseY = event.clientY
-        state.pitchAdvance += deltaY
-    }
+    let mouseMoveHandler = (event) => onMouseMove(event, state)
     
     canvas.addEventListener('pointerdown', (event) => {
         state.prevMouseX = event.clientX
         state.prevMouseY = event.clientY
-        canvas.addEventListener('pointermove', changeView)
+        canvas.addEventListener('pointermove', mouseMoveHandler)
         canvas.setPointerCapture(event.pointerId)
     })
     
     canvas.addEventListener('pointerup', (event) => {
-        canvas.removeEventListener('pointermove', changeView)
+        canvas.removeEventListener('pointermove', mouseMoveHandler)
         canvas.releasePointerCapture(event.pointerId)
     })
     
-    document.addEventListener('keydown', (event) => {
-        if ( event.code == keyForward ) {
-            state.acceleration = maxSpeed
-        } else if ( event.code == keyBackward ) {
-            state.acceleration = -maxSpeed
-        } else if ( event.code == keyLeft ) {
-            state.sideAcceleration = -maxSideSpeed
-        } else if ( event.code == keyRight ) {
-            state.sideAcceleration = maxSideSpeed
-        } else if ( event.code == keyUp ) {
-            state.verticalAcceleration = maxVerticalSpeed
-        } else if ( event.code == keyDown ) {
-            state.verticalAcceleration = -maxVerticalSpeed
-        } else if ( event.code == keyRollCCW ) {
-            state.rollAcceleration = -maxRollSpeed
-        } else if ( event.code == keyRollCW ) {
-            state.rollAcceleration = maxRollSpeed
-        }
-    })
+    document.addEventListener('keydown', (event) => onKeyDown(event, state))
     
-    document.addEventListener('keyup', (event) => {
-        if ( event.code == keyForward || event.code == keyBackward ) {
-            state.acceleration = 0
-        } else if ( event.code == keyLeft || event.code == keyRight ) {
-            state.sideAcceleration = 0
-        } else if ( event.code == keyUp || event.code == keyDown ) {
-            state.verticalAcceleration = 0
-        } else if ( event.code == keyRollCCW || event.code == keyRollCW ) {
-            state.rollAcceleration = 0
-        }
-    })
-
+    document.addEventListener('keyup', (event) => onKeyUp(event, state))
+    
+    let draw = () => {
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+        world.draw(state)
+    }
+    
+    requestAnimationFrame(draw)
+    
+    setInterval(
+        () => {
+            let changed = movePlayer(state)
+            
+            if ( changed ) {
+                requestAnimationFrame(draw)
+                // console.log('Moved')
+            }
+        }, msecPerTick
+    )
 }
 
 </script>
