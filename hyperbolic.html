@@ -17,6 +17,22 @@ const keyDown = 'KeyA'
 const keyRollCCW = 'KeyW'
 const keyRollCW = 'KeyR'
 
+const inertia = 4
+const rotationInertia = 4
+const mouseInertia = 2
+const maxSpeed = 0.5
+const maxSideSpeed = 0.1
+const maxVerticalSpeed = 0.1
+const maxRollSpeed = 0.03
+const yawSensitivity = 0.001
+const pitchSensitivity = 0.001
+
+//--------------------------------------------------------------
+// calculated constants
+const deltaThreshold = 0.001
+const inertialCoef = 1 / (1 + inertia)
+const mouseInertialCoef = 1 / (1 + mouseInertia)
+const rotationInertialCoef = 1 / (1 + rotationInertia)
 //--------------------------------------------------------------
 let vertexShaderSrc = `
 attribute vec4 pos;
@@ -456,8 +472,8 @@ function main() {
         verticalAcceleration: 0,
         rollSpeed: 0,
         rollAcceleration: 0,
-        xRotAdvance: 0,
-        yRotAdvance: 0,
+        yawAdvance: 0,
+        pitchAdvance: 0,
     }
     translate(state.viewMatrix, 0, 0, -10)
     
@@ -465,42 +481,42 @@ function main() {
     
     setInterval(
         () => {
-            let speedDelta = (state.acceleration - state.speed) * 0.2
-            if ( Math.abs(speedDelta) > 0.001 ) state.speed += speedDelta
+            let speedDelta = (state.acceleration - state.speed) * inertialCoef
+            if ( Math.abs(speedDelta) > maxSpeed * deltaThreshold ) state.speed += speedDelta
             else state.speed = state.acceleration
             
-            let sideSpeedDelta = (state.sideAcceleration - state.sideSpeed) * 0.5
-            if ( Math.abs(sideSpeedDelta) > 0.001 ) state.sideSpeed += sideSpeedDelta
+            let sideSpeedDelta = (state.sideAcceleration - state.sideSpeed) * inertialCoef
+            if ( Math.abs(sideSpeedDelta) > maxSideSpeed * deltaThreshold ) state.sideSpeed += sideSpeedDelta
             else state.sideSpeed = state.sideAcceleration
             
-            let verticalSpeedDelta = (state.verticalAcceleration - state.verticalSpeed) * 0.5
-            if ( Math.abs(verticalSpeedDelta) > 0.001 ) state.verticalSpeed += verticalSpeedDelta
+            let verticalSpeedDelta = (state.verticalAcceleration - state.verticalSpeed) * inertialCoef
+            if ( Math.abs(verticalSpeedDelta) > maxVerticalSpeed * deltaThreshold ) state.verticalSpeed += verticalSpeedDelta
             else state.verticalSpeed = state.verticalAcceleration
             
-            let rollSpeedDelta = (state.rollAcceleration - state.rollSpeed) * 0.2
-            if ( Math.abs(rollSpeedDelta) > 0.001 ) {
+            let rollSpeedDelta = (state.rollAcceleration - state.rollSpeed) * rotationInertialCoef
+            if ( Math.abs(rollSpeedDelta) > maxRollSpeed * deltaThreshold ) {
                 state.rollSpeed += rollSpeedDelta
-                rotate(state.viewMatrix, 0, 1, state.rollSpeed*0.03)
+                rotate(state.viewMatrix, 0, 1, state.rollSpeed)
             } else state.rollSpeed = 0
             
-            let xRotDelta = state.xRotAdvance * 0.5
-            if ( Math.abs(xRotDelta) > 0.0001 ) {
-                state.xRotAdvance -= xRotDelta
-                rotate(state.viewMatrix, 2, 0, xRotDelta*0.001)
-            } else state.xRotAdvance = 0
+            let yawDelta = state.yawAdvance * mouseInertialCoef
+            if ( Math.abs(yawDelta) > deltaThreshold ) {
+                state.yawAdvance -= yawDelta
+                rotate(state.viewMatrix, 2, 0, yawDelta*yawSensitivity)
+            } else state.yawAdvance = 0
             
-            let yRotDelta = state.yRotAdvance * 0.5
-            if ( Math.abs(yRotDelta) > 0.0001 ) {
-                state.yRotAdvance -= yRotDelta
-                rotate(state.viewMatrix, 1, 2, yRotDelta*0.001)
-            } else state.yRotAdvance = 0
+            let pitchDelta = state.pitchAdvance * mouseInertialCoef
+            if ( Math.abs(pitchDelta) > deltaThreshold ) {
+                state.pitchAdvance -= pitchDelta
+                rotate(state.viewMatrix, 1, 2, pitchDelta*pitchSensitivity)
+            } else state.pitchAdvance = 0
             
             if ( Math.abs(state.speed) > 0 || Math.abs(state.sideSpeed) > 0 || Math.abs(state.verticalSpeed) > 0 ||
-                 Math.abs(xRotDelta) > 0 || Math.abs(xRotDelta) > 0 || Math.abs(state.rollSpeed) > 0
+                 Math.abs(yawDelta) > 0 || Math.abs(pitchDelta) > 0 || Math.abs(state.rollSpeed) > 0
             ) {
-                translate(state.viewMatrix, -state.sideSpeed * 0.1, -state.verticalSpeed * 0.1, state.speed * 0.1)
+                translate(state.viewMatrix, -state.sideSpeed, -state.verticalSpeed, state.speed)
                 requestAnimationFrame(() => world.draw(state))
-                // console.log(state.speed, state.sideSpeed, state.verticalSpeed, xRotDelta, yRotDelta, state.rollSpeed)
+                // console.log(state.speed, state.sideSpeed, state.verticalSpeed, yawDelta, pitchDelta, state.rollSpeed)
             }
         }, 20
     )
@@ -508,11 +524,11 @@ function main() {
     let changeView = (event) => {
         let deltaX = event.clientX - state.prevMouseX
         state.prevMouseX = event.clientX
-        state.xRotAdvance += deltaX
+        state.yawAdvance += deltaX
         
         let deltaY = event.clientY - state.prevMouseY
         state.prevMouseY = event.clientY
-        state.yRotAdvance += deltaY
+        state.pitchAdvance += deltaY
     }
     
     canvas.addEventListener('pointerdown', (event) => {
@@ -529,21 +545,21 @@ function main() {
     
     document.addEventListener('keydown', (event) => {
         if ( event.code == keyForward ) {
-            state.acceleration = 1
+            state.acceleration = maxSpeed
         } else if ( event.code == keyBackward ) {
-            state.acceleration = -1
+            state.acceleration = -maxSpeed
         } else if ( event.code == keyLeft ) {
-            state.sideAcceleration = -1
+            state.sideAcceleration = -maxSideSpeed
         } else if ( event.code == keyRight ) {
-            state.sideAcceleration = 1
+            state.sideAcceleration = maxSideSpeed
         } else if ( event.code == keyUp ) {
-            state.verticalAcceleration = 1
+            state.verticalAcceleration = maxVerticalSpeed
         } else if ( event.code == keyDown ) {
-            state.verticalAcceleration = -1
+            state.verticalAcceleration = -maxVerticalSpeed
         } else if ( event.code == keyRollCCW ) {
-            state.rollAcceleration = -1
+            state.rollAcceleration = -maxRollSpeed
         } else if ( event.code == keyRollCW ) {
-            state.rollAcceleration = 1
+            state.rollAcceleration = maxRollSpeed
         }
     })
     
