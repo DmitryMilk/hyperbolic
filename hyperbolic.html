@@ -10,14 +10,14 @@ const zFar = 1000
 
 const tickRate = 50
 
-const keyForward = 'KeyE'
-const keyBackward = 'KeyD'
-const keyLeft = 'KeyS'
-const keyRight = 'KeyF'
-const keyUp = 'KeyQ'
-const keyDown = 'KeyA'
-const keyRollCCW = 'KeyW'
-const keyRollCW = 'KeyR'
+const actionForward = 'KeyE'
+const actionBackward = 'KeyD'
+const actionLeft = 'KeyS'
+const actionRight = 'KeyF'
+const actionUp = 'KeyQ'
+const actionDown = 'KeyA'
+const actionRollCCW = 'KeyW'
+const actionRollCW = 'KeyR'
 
 const inertia = 4
 const rotationInertia = 4
@@ -506,35 +506,55 @@ function onMouseMove(event, state) {
 }
 
 //--------------------------------------------------------------
-function onKeyDown(event, state) {
-    if ( event.code == keyForward ) {
+function startAction(eventName, state) {
+    if ( eventName == actionForward ) {
         state.acceleration = maxSpeed
-    } else if ( event.code == keyBackward ) {
+    }
+    
+    if ( eventName == actionBackward ) {
         state.acceleration = -maxSpeed
-    } else if ( event.code == keyLeft ) {
+    }
+    
+    if ( eventName == actionLeft ) {
         state.sideAcceleration = -maxSideSpeed
-    } else if ( event.code == keyRight ) {
+    }
+    
+    if ( eventName == actionRight ) {
         state.sideAcceleration = maxSideSpeed
-    } else if ( event.code == keyUp ) {
+    }
+    
+    if ( eventName == actionUp ) {
         state.verticalAcceleration = maxVerticalSpeed
-    } else if ( event.code == keyDown ) {
+    }
+    
+    if ( eventName == actionDown ) {
         state.verticalAcceleration = -maxVerticalSpeed
-    } else if ( event.code == keyRollCCW ) {
+    }
+    
+    if ( eventName == actionRollCCW ) {
         state.rollAcceleration = -maxRollSpeed
-    } else if ( event.code == keyRollCW ) {
+    }
+    
+    if ( eventName == actionRollCW ) {
         state.rollAcceleration = maxRollSpeed
     }
 }
 
 //--------------------------------------------------------------
-function onKeyUp(event, state) {
-    if ( event.code == keyForward || event.code == keyBackward ) {
+function endAction(eventName, state) {
+    if ( eventName == actionForward || eventName == actionBackward ) {
         state.acceleration = 0
-    } else if ( event.code == keyLeft || event.code == keyRight ) {
+    }
+    
+    if ( eventName == actionLeft || eventName == actionRight ) {
         state.sideAcceleration = 0
-    } else if ( event.code == keyUp || event.code == keyDown ) {
+    }
+    
+    if ( eventName == actionUp || eventName == actionDown ) {
         state.verticalAcceleration = 0
-    } else if ( event.code == keyRollCCW || event.code == keyRollCW ) {
+    }
+    
+    if ( eventName == actionRollCCW || eventName == actionRollCW ) {
         state.rollAcceleration = 0
     }
 }
@@ -572,20 +592,36 @@ function main() {
     let mouseMoveHandler = (event) => onMouseMove(event, state)
     
     canvas.addEventListener('pointerdown', (event) => {
-        state.prevMouseX = event.clientX
-        state.prevMouseY = event.clientY
-        canvas.addEventListener('pointermove', mouseMoveHandler)
-        canvas.setPointerCapture(event.pointerId)
+        if ( event.pointerType != 'mouse' ) return
+        
+        if ( event.button == 0 ) {
+            state.prevMouseX = event.clientX
+            state.prevMouseY = event.clientY
+            canvas.addEventListener('pointermove', mouseMoveHandler)
+            canvas.setPointerCapture(event.pointerId)
+        } else {
+            startAction(`MouseButton${event.button}`, state)
+        }
+        
+        event.preventDefault()
     })
     
     canvas.addEventListener('pointerup', (event) => {
-        canvas.removeEventListener('pointermove', mouseMoveHandler)
-        canvas.releasePointerCapture(event.pointerId)
+        if ( event.pointerType != 'mouse' ) return
+        
+        if ( event.button == 0 ) {
+            canvas.removeEventListener('pointermove', mouseMoveHandler)
+            canvas.releasePointerCapture(event.pointerId)
+        } else {
+            endAction(`MouseButton${event.button}`, state)
+        }
+        
+        event.preventDefault()
     })
     
-    document.addEventListener('keydown', (event) => onKeyDown(event, state))
+    document.addEventListener('keydown', (event) => startAction(event.code, state))
     
-    document.addEventListener('keyup', (event) => onKeyUp(event, state))
+    document.addEventListener('keyup', (event) => endAction(event.code, state))
     
     let draw = () => {
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
@@ -610,7 +646,7 @@ function main() {
 </head>
 
 <body onload="main()">
-    <canvas id="canvas" width="800" height="600"></canvas>
+    <canvas id="canvas" width="800" height="600" oncontextmenu="return false"></canvas>
 </body>
 </html>
 
