@@ -1,0 +1,571 @@
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+
+fovToScreen = 30
+const zNear = 5
+const zFar = 1000
+
+const keyForward = 'KeyE'
+const keyBackward = 'KeyD'
+const keyLeft = 'KeyS'
+const keyRight = 'KeyF'
+const keyUp = 'KeyQ'
+const keyDown = 'KeyA'
+const keyRollCCW = 'KeyW'
+const keyRollCW = 'KeyR'
+
+//--------------------------------------------------------------
+let vertexShaderSrc = `
+attribute vec4 pos;
+attribute vec4 color;
+
+uniform mat4 transform;
+
+varying vec4 f_color;
+
+void main() {
+    gl_Position = pos * transform;
+    f_color = color;
+}
+`
+
+//--------------------------------------------------------------
+let fragmentShaderSrc = `
+varying highp vec4 f_color;
+
+void main() {
+    gl_FragColor = f_color;
+}
+`
+
+//--------------------------------------------------------------
+let worldProgram = {
+    shaders: [
+        { type: "VERTEX_SHADER", src: vertexShaderSrc, },
+        { type: "FRAGMENT_SHADER", src: fragmentShaderSrc, }
+    ],
+    
+    uniforms: {
+        transform: null,
+    },
+    
+    vertexSpecification: [
+        // attributes, located in the same buffer
+        // {
+        //     type: "FLOAT", // type of values in buffer
+        //     attributes: [
+        //         {
+        //             name: "AttributeName",
+        //             sizeUnits: 4,
+        //             offsetUnits: 0 //  OPTIONAL, offset in units (not in bytes), default automatic
+        //             strideUnits: 0 //  OPTIONAL, stride in units (not in bytes), default automatic over all attributes in buffer
+        //             normalized: 0  //  OPTIONAL, default false
+        //         },
+        //     ]
+        //     buffer:        //  OPTIONAL, explicit buffer specification, default automatic buffer allocation
+        // },
+        {
+            type: "FLOAT",
+            attributes: [
+                {
+                    name: "pos",
+                    sizeUnits: 4,
+                },
+                {
+                    name: "color",
+                    sizeUnits: 4,
+                },
+            ]
+        },
+    ]
+}
+
+//--------------------------------------------------------------
+class BufferBuilder {
+    constructor(program) {
+        if (!program.ready) throw new Error('Program is not compiled yet')
+        
+        this.program = program
+        this.size = 0
+        this.vertexArrays = program.vertexSpecification.map(x => new Array)
+    }
+    
+    clear() {
+        for ( let vertexArray of this.vertexArrays ) vertexArray.length = 0
+        
+        this.size = 0
+    }
+    
+    addVertex(vertex, index) {
+        if ( index === undefined ) {
+            index = this.size
+        }
+        for ( let i = 0; i < this.program.vertexSpecification.length; i++ ) {
+            let vertexArray = this.vertexArrays[i]
+            for ( const attr of this.program.vertexSpecification[i].attributes ) {
+                let vertexAttr = vertex[attr.name]
+                if ( vertexAttr===undefined ) throw new Error(`"${attr.name}" required in vertex specification`)
+                if ( vertexAttr[0]===undefined ) vertexAttr = [vertexAttr]
+                if ( vertexAttr.length != attr.sizeUnits) {
+                    throw new Error(`"${attr.name}" attribute must be of lenth ${attr.sizeUnits}`)
+                }
+                for ( let k = 0; k < attr.sizeUnits; k++ ) {
+                    vertexArray[attr.offsetUnits + index*attr.strideUnits + k] = vertexAttr[k]
+                }
+            }
+        }
+        
+        if ( index >= this.size ) this.size = index + 1;
+        
+        return index
+    }
+    
+    uploadData() {
+        let gl = this.program.gl
+        
+        gl.useProgram(this.program.program)
+        
+        for ( let i = 0; i < this.program.vertexSpecification.length; i++ ) {
+            let spec = this.program.vertexSpecification[i]
+            
+            gl.bindBuffer(gl.ARRAY_BUFFER, spec.buffer)
+            gl.bufferData(
+                gl.ARRAY_BUFFER,
+                new dataTypes[spec.type].arrayType(this.vertexArrays[i]),
+                gl.STATIC_DRAW
+            )
+        }
+        
+        this.clear()
+    }
+}
+
+//--------------------------------------------------------------
+function resolveConstant(gl, value) {
+    return typeof value == 'string' ? gl[value] : value
+}
+
+//--------------------------------------------------------------
+const dataTypes = {
+    BYTE:           { size: 1, arrayType: Int8Array },
+    UNSIGNED_BYTE:  { size: 1, arrayType: Uint8Array },
+    SHORT:          { size: 2, arrayType: Int16Array },
+    UNSIGNED_SHORT: { size: 2, arrayType: Uint16Array },
+    INT:            { size: 4, arrayType: Int32Array },
+    UNSIGNED_INT:   { size: 4, arrayType: Uint32Array },
+    FLOAT:          { size: 4, arrayType: Float32Array },
+}
+
+//--------------------------------------------------------------
+function buildProgram(gl, program) {
+    program.program = gl.createProgram()
+    
+    for ( let shader of program.shaders ) {
+        shader.shader = gl.createShader(resolveConstant(gl, shader.type))
+        gl.shaderSource(shader.shader, shader.src)
+        gl.compileShader(shader.shader)
+        if ( !gl.getShaderParameter(shader.shader, gl.COMPILE_STATUS) ) {
+            console.log(`Compile error: ${gl.getShaderInfoLog(shader.shader)}`)
+        }
+        gl.attachShader(program.program, shader.shader)
+    }
+    
+    gl.linkProgram(program.program)
+    
+    for ( let shader of program.shaders ) {
+        gl.deleteShader(shader.shader)
+        delete shader.shader
+    }
+    
+    if(!gl.getProgramParameter(program.program, gl.LINK_STATUS)) {
+        const shaderError = gl.getProgramInfoLog(program.program)
+        throw new Error(`Shader error: ${shaderError}`)
+    }
+    
+    for ( let spec of program.vertexSpecification ) {
+        if ( !spec.buffer ) spec.buffer = gl.createBuffer()
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, spec.buffer)
+        const unitSize = dataTypes[spec.type].size
+        let strideUnits = spec.attributes.reduce((accum, attr) => accum + attr.sizeUnits, 0)
+        var offsetUnits = 0
+        
+        for ( let attr of spec.attributes ) {
+            attr.location = gl.getAttribLocation(program.program, attr.name)
+            if ( attr.location == -1 ) throw new Error(`Vertex attribut name not found: ${attr.name}`)
+            
+            if ( attr.offsetUnits === undefined ) attr.offsetUnits = offsetUnits
+            if ( attr.strideUnits === undefined ) attr.strideUnits = strideUnits
+            
+            gl.vertexAttribPointer(
+                attr.location,
+                attr.sizeUnits,
+                resolveConstant(gl, spec.type),
+                attr.normalized,
+                attr.strideUnits * unitSize,
+                attr.offsetUnits * unitSize
+            )
+            gl.enableVertexAttribArray(attr.location)
+            offsetUnits += attr.sizeUnits
+        }
+    }
+    
+    for ( let uniform in program.uniforms ) {
+        program.uniforms[uniform] = gl.getUniformLocation(program.program, uniform)
+        if ( program.uniforms[uniform] === null ) throw new Error(`Uniform not found: ${uniform}`)
+    }
+    
+    program.gl = gl
+    program.ready = true
+}
+
+//============================================================
+// Matrix functions
+
+//--------------------------------------------------------------
+function frustum(left, right, bottom, top, near, far) {
+    let mat = new Float32Array(16)
+    
+    mat[0] = 2 * near / (right - left)
+    mat[1] = 0
+    mat[2] = (right + left) / (right - left)
+    mat[3] = 0
+    
+    mat[4] = 0
+    mat[5] = 2 * near / (top - bottom)
+    mat[6] = (top + bottom) / (top - bottom)
+    mat[7] = 0
+    
+    mat[8] = 0
+    mat[9] = 0
+    mat[10] = - (far + near) / (far - near)
+    mat[11] = - 2 * far * near / (far - near)
+    
+    mat[12] = 0
+    mat[13] = 0
+    mat[14] = -1
+    mat[15] = 0
+    
+    return mat
+}
+
+//--------------------------------------------------------------
+function transposed(org) {
+    let mat = new Float32Array(16)
+    for (var row=0; row<4; row++ ) {
+        for (var col=0; col<4; col++ ) {
+            mat[col+row*4] = org[col*4+row]
+        }
+    }
+    
+    return mat
+}
+
+//--------------------------------------------------------------
+function mulMatrix(mat1, mat2) {
+    let mat = new Float32Array(16)
+    
+    for (var row=0; row<4; row++) {
+        for (var col=0; col<16; col+=4) {
+            mat[row+col] = (
+                mat1[row]      * mat2[col] + 
+                mat1[row + 4]  * mat2[col + 1] + 
+                mat1[row + 8]  * mat2[col + 2] + 
+                mat1[row + 12] * mat2[col + 3]
+            )
+        }
+    }
+    
+    return mat
+}
+
+//--------------------------------------------------------------
+function applyMatrix(v, mat) {
+    var result = [0, 0, 0, 0]
+    
+    for (var i=0; i<4; i++) {
+        let col = i * 4
+        result[i] = (
+            v[0] * mat[col] + 
+            v[1] * mat[col + 1] + 
+            v[2] * mat[col + 2] + 
+            v[3] * mat[col + 3]
+        )
+    }
+    
+    return result
+}
+
+//--------------------------------------------------------------
+function identity() {
+    let mat = new Float32Array(16)
+    mat[0] = mat[5] = mat[10] = mat[15] = 1.0
+    return mat
+}
+
+//--------------------------------------------------------------
+function hyperRotate(mat, axis1, axis2, param) {
+    let index1 = axis1 * 4
+    let index2 = axis2 * 4
+    let c = Math.cosh(param)
+    let s = Math.sinh(param)
+    for ( var i=0; i<4; i++ ) {
+        let temp = mat[index1]*c + mat[index2]*s;
+        mat[index2] = mat[index2]*c + mat[index1]*s;
+        mat[index1] = temp;
+        index1++;
+        index2++;
+    }
+}
+
+//--------------------------------------------------------------
+function rotate(mat, axis1, axis2, angle) {
+    let index1 = axis1 * 4
+    let index2 = axis2 * 4
+    let c = Math.cos(angle)
+    let s = Math.sin(angle)
+    for ( var i=0; i<4; i++ ) {
+        let temp = mat[index1]*c - mat[index2]*s;
+        mat[index2] = mat[index2]*c + mat[index1]*s;
+        mat[index1] = temp;
+        index1++;
+        index2++;
+    }
+}
+
+//--------------------------------------------------------------
+function translate(mat, dx, dy, dz) {
+    mat[3] += dx
+    mat[7] += dy
+    mat[11] += dz
+}
+
+//--------------------------------------------------------------
+function scale(mat, sx, sy, sz) {
+    mat[0] *= sx
+    mat[1] *= sx
+    mat[2] *= sx
+    mat[3] *= sx
+    mat[4] *= sy
+    mat[5] *= sy
+    mat[6] *= sy
+    mat[7] *= sy
+    mat[8] *= sz
+    mat[9] *= sz
+    mat[10] *= sz
+    mat[11] *= sz
+}
+//============================================================
+class World {
+    constructor(program) {
+        let gl = program.gl
+        this.program = program
+        
+        let indices = []
+        
+        let bufferBuilder = new BufferBuilder(program)
+        
+        let cubeSize = 0.5
+        let buildFace = (axis1, axis2, faceSign, color) => {
+            let pos = [0, 0, 0, 1]
+            let faceIndices = []
+            for ( const i of [-cubeSize, cubeSize] ) {
+                for ( const j of [-cubeSize, cubeSize] ) {
+                    pos[axis1] = j
+                    pos[axis2] = i
+                    pos[3 - axis1 - axis2] = cubeSize * faceSign
+                    faceIndices.push(bufferBuilder.addVertex({ pos: pos, color: color }))
+                }
+            }
+            indices.push(faceIndices[0], faceIndices[1], faceIndices[2], faceIndices[2], faceIndices[1], faceIndices[3])
+        }
+        
+        buildFace(0, 1, 1, [1, 0, 0, 1])
+        buildFace(1, 0, -1, [0, 1, 1, 1])
+        buildFace(1, 2, 1, [0, 1, 0, 1])
+        buildFace(2, 1, -1, [1, 0, 1, 1])
+        buildFace(2, 0, 1, [0, 0, 1, 1])
+        buildFace(0, 2, -1, [1, 1, 0, 1])
+        
+        bufferBuilder.uploadData()
+        
+        this.indexBuffer = gl.createBuffer()
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer)
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW)
+        
+        this.N = indices.length
+    }
+
+    draw(state) {
+        let gl = this.program.gl
+        
+        let viewMatrix = new Float32Array(state.viewMatrix)
+        
+        gl.useProgram(this.program.program)
+        gl.uniformMatrix4fv(this.program.uniforms.transform, false, mulMatrix(viewMatrix, gl.projectionMatrix))
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer)
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+        gl.drawElements(gl.TRIANGLES, this.N, gl.UNSIGNED_SHORT, 0)
+    }
+}
+
+//--------------------------------------------------------------
+function setupProjection(gl) {
+    let unitsPerPixel = 2 * zNear * Math.tan(fovToScreen * Math.PI / 360) / screen.width
+    console.log(`Pixels per unit: ${1/unitsPerPixel}`)
+    let canvasHalfWidthInUnits = gl.canvas.width * unitsPerPixel / 2
+    let canvasHalfHeightInUnits = gl.canvas.height * unitsPerPixel / 2
+    console.log(`Canvas width in units: ${gl.canvas.width * unitsPerPixel}`)
+    console.log(`Canvas height in units: ${gl.canvas.height * unitsPerPixel}`)
+    
+    gl.projectionMatrix = frustum(
+        -canvasHalfWidthInUnits,
+        canvasHalfWidthInUnits,
+        -canvasHalfHeightInUnits,
+        canvasHalfHeightInUnits,
+        zNear,
+        zFar
+    )
+}
+
+//--------------------------------------------------------------
+function main() {
+    let canvas = document.querySelector('#canvas')
+    let gl = canvas.getContext('webgl')
+    gl.clearColor(0.0, 0.0, 0.0, 1.0)
+    gl.enable(gl.DEPTH_TEST)
+    gl.enable(gl.CULL_FACE)
+    setupProjection(gl)
+    
+    buildProgram(gl, worldProgram)
+    
+    let world = new World(worldProgram)
+    
+    let state = { 
+        prevMouseX: null,
+        prevMouseY: null,
+        viewMatrix: identity(),
+        speed: 0,
+        acceleration: 0,
+        sideSpeed: 0,
+        sideAcceleration: 0,
+        verticalSpeed: 0,
+        verticalAcceleration: 0,
+        rollSpeed: 0,
+        rollAcceleration: 0,
+        xRotAdvance: 0,
+        yRotAdvance: 0,
+    }
+    translate(state.viewMatrix, 0, 0, -10)
+    
+    world.draw(state)
+    
+    setInterval(
+        () => {
+            let speedDelta = (state.acceleration - state.speed) * 0.2
+            if ( Math.abs(speedDelta) > 0.001 ) state.speed += speedDelta
+            else state.speed = state.acceleration
+            
+            let sideSpeedDelta = (state.sideAcceleration - state.sideSpeed) * 0.5
+            if ( Math.abs(sideSpeedDelta) > 0.001 ) state.sideSpeed += sideSpeedDelta
+            else state.sideSpeed = state.sideAcceleration
+            
+            let verticalSpeedDelta = (state.verticalAcceleration - state.verticalSpeed) * 0.5
+            if ( Math.abs(verticalSpeedDelta) > 0.001 ) state.verticalSpeed += verticalSpeedDelta
+            else state.verticalSpeed = state.verticalAcceleration
+            
+            let rollSpeedDelta = (state.rollAcceleration - state.rollSpeed) * 0.2
+            if ( Math.abs(rollSpeedDelta) > 0.001 ) {
+                state.rollSpeed += rollSpeedDelta
+                rotate(state.viewMatrix, 0, 1, state.rollSpeed*0.03)
+            } else state.rollSpeed = 0
+            
+            let xRotDelta = state.xRotAdvance * 0.5
+            if ( Math.abs(xRotDelta) > 0.0001 ) {
+                state.xRotAdvance -= xRotDelta
+                rotate(state.viewMatrix, 2, 0, xRotDelta*0.001)
+            } else state.xRotAdvance = 0
+            
+            let yRotDelta = state.yRotAdvance * 0.5
+            if ( Math.abs(yRotDelta) > 0.0001 ) {
+                state.yRotAdvance -= yRotDelta
+                rotate(state.viewMatrix, 1, 2, yRotDelta*0.001)
+            } else state.yRotAdvance = 0
+            
+            if ( Math.abs(state.speed) > 0 || Math.abs(state.sideSpeed) > 0 || Math.abs(state.verticalSpeed) > 0 ||
+                 Math.abs(xRotDelta) > 0 || Math.abs(xRotDelta) > 0 || Math.abs(state.rollSpeed) > 0
+            ) {
+                translate(state.viewMatrix, -state.sideSpeed * 0.1, -state.verticalSpeed * 0.1, state.speed * 0.1)
+                requestAnimationFrame(() => world.draw(state))
+                // console.log(state.speed, state.sideSpeed, state.verticalSpeed, xRotDelta, yRotDelta, state.rollSpeed)
+            }
+        }, 20
+    )
+    
+    let changeView = (event) => {
+        let deltaX = event.clientX - state.prevMouseX
+        state.prevMouseX = event.clientX
+        state.xRotAdvance += deltaX
+        
+        let deltaY = event.clientY - state.prevMouseY
+        state.prevMouseY = event.clientY
+        state.yRotAdvance += deltaY
+    }
+    
+    canvas.addEventListener('pointerdown', (event) => {
+        state.prevMouseX = event.clientX
+        state.prevMouseY = event.clientY
+        canvas.addEventListener('pointermove', changeView)
+        canvas.setPointerCapture(event.pointerId)
+    })
+    
+    canvas.addEventListener('pointerup', (event) => {
+        canvas.removeEventListener('pointermove', changeView)
+        canvas.releasePointerCapture(event.pointerId)
+    })
+    
+    document.addEventListener('keydown', (event) => {
+        if ( event.code == keyForward ) {
+            state.acceleration = 1
+        } else if ( event.code == keyBackward ) {
+            state.acceleration = -1
+        } else if ( event.code == keyLeft ) {
+            state.sideAcceleration = -1
+        } else if ( event.code == keyRight ) {
+            state.sideAcceleration = 1
+        } else if ( event.code == keyUp ) {
+            state.verticalAcceleration = 1
+        } else if ( event.code == keyDown ) {
+            state.verticalAcceleration = -1
+        } else if ( event.code == keyRollCCW ) {
+            state.rollAcceleration = -1
+        } else if ( event.code == keyRollCW ) {
+            state.rollAcceleration = 1
+        }
+    })
+    
+    document.addEventListener('keyup', (event) => {
+        if ( event.code == keyForward || event.code == keyBackward ) {
+            state.acceleration = 0
+        } else if ( event.code == keyLeft || event.code == keyRight ) {
+            state.sideAcceleration = 0
+        } else if ( event.code == keyUp || event.code == keyDown ) {
+            state.verticalAcceleration = 0
+        } else if ( event.code == keyRollCCW || event.code == keyRollCW ) {
+            state.rollAcceleration = 0
+        }
+    })
+
+}
+
+</script>
+</head>
+
+<body onload="main()">
+    <canvas id="canvas" width="800" height="600"></canvas>
+</body>
+</html>
+
