@@ -457,6 +457,18 @@ function setupProjection(gl) {
 }
 
 //--------------------------------------------------------------
+function onResize(entries, observer, gl) {
+    for (const entry of entries) {
+        console.log(`Resize: ${entry.contentRect.width}:${entry.contentRect.height}`)
+        gl.canvas.width = entry.contentRect.width
+        gl.canvas.height = entry.contentRect.height
+        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height)
+    }
+    
+    setupProjection(gl)
+}
+
+//--------------------------------------------------------------
 function movePlayer(state) {
     var changed = false
     
@@ -596,6 +608,8 @@ function main() {
     
     translate(state.viewMatrix, 0, 0, -10)
     
+    // register event listeners
+    
     let mouseMoveHandler = (event) => onMouseMove(event, state)
     
     canvas.addEventListener('pointerdown', (event) => {
@@ -639,7 +653,23 @@ function main() {
         world.draw(state)
     }
     
-    requestAnimationFrame(draw)
+    // fullscreen processing
+    
+    resizeObserver = new ResizeObserver((entries, observer) => {
+        onResize(entries, observer, gl)
+        requestAnimationFrame(draw)
+    })
+    resizeObserver.observe(canvas)
+    
+    document.addEventListener('fullscreenchange', (event) => {
+        if ( !document.fullscreenElement ) {
+            console.log('Restore canvas size')
+            canvas.width = 800
+            canvas.height = 600
+        }
+    })
+    
+    // animation cycle
     
     setInterval(
         () => {
@@ -657,6 +687,8 @@ function main() {
 </head>
 
 <body onload="main()" onscroll="return false">
+    <button onclick="document.querySelector('#canvas').requestFullscreen()">Fullscreen</button>
+    <br />
     <canvas id="canvas" width="800" height="600" oncontextmenu="return false"></canvas>
 </body>
 </html>
