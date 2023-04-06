@@ -10,41 +10,39 @@ const zFar = 1000
 
 const tickRate = 50
 
-// Allowed names: KeyX/Space/Enter/Backspace/Tab/CapsLock/ShiftLeft/ControlLeft and other for keybord,
+// Allowed names: KeyX/Space/Enter/Backspace/Tab/CapsLock/ShiftLeft/ControlRight and other for keybord,
 //                MouseButton0/MouseButton1/MouseButton2 and other for mouse butons
 //                MouseWheelUp/MuseWheelDown for mouse wheel
-const actionForward = 'KeyE'
-const actionBackward = 'KeyD'
-const actionLeft = 'KeyS'
-const actionRight = 'KeyF'
-const actionUp = 'KeyQ'
-const actionDown = 'KeyA'
-const actionRollCCW = 'KeyW'
-const actionRollCW = 'KeyR'
-const actionYawRight = 'KeyC'
-const actionYawLeft = 'KeyX'
-const actionPitchUp = 'MouseWheelDown'
-const actionPitchDown = 'MouseWheelUp'
+const actionForward = 'KeyW'
+const actionBackward = 'KeyS'
+const actionLeft = 'KeyA'
+const actionRight = 'KeyD'
+const actionUp = 'MouseWheelUp'
+const actionDown = 'MouseWheelDown'
+const actionRollCCW = 'KeyQ'
+const actionRollCW = 'KeyE'
+const actionYawRight = 'KeyX'
+const actionYawLeft = 'KeyZ'
+const actionPitchUp = ''
+const actionPitchDown = ''
 
 const inertia = 4
 const rotationInertia = 4
-const mouseInertia = 2
+const mouseInertia = 0.5
 const maxSpeed = 0.5
 const maxSideSpeed = 0.1
-const maxVerticalSpeed = 0.1
+const maxVerticalSpeed = 0.2
 const maxRollSpeed = 0.03
-const maxYawSpeed = 0.03
-const maxPitchSpeed = 0.03
+const maxYawSpeed = 0.1
+const maxPitchSpeed = 0.1
 const yawSensitivity = 0.001
 const pitchSensitivity = 0.001
 
 //--------------------------------------------------------------
-// calculated constants
-const deltaThreshold = 0.001
-const inertialCoef = 1 / (1 + inertia)
-const mouseInertialCoef = 1 / (1 + mouseInertia)
-const rotationInertialCoef = 1 / (1 + rotationInertia)
+// other constants
+const deltaThreshold = 0.0001
 const msecPerTick = 1000 / tickRate
+
 //--------------------------------------------------------------
 let vertexShaderSrc = `
 attribute vec4 pos;
@@ -463,10 +461,6 @@ function movePlayer(state) {
     var changed = false
     
     for ( let movement of Object.values(state.movement) ) {
-        let delta = (movement.acceleration - movement.speed) * movement.inertialCoef
-        if ( Math.abs(delta) > movement.limit * deltaThreshold ) movement.speed += delta
-        else movement.speed = movement.acceleration
-        
         if ( Math.abs(movement.speed) > 0 ) changed = true
     }
     
@@ -493,6 +487,12 @@ function movePlayer(state) {
         */
     }
     
+    for ( let movement of Object.values(state.movement) ) {
+        let delta = (movement.targetSpeed - movement.speed) * movement.inertialCoef
+        if ( Math.abs(delta) > deltaThreshold ) movement.speed += delta
+        else movement.speed = movement.targetSpeed
+    }
+    
     return changed
 }
 
@@ -500,11 +500,11 @@ function movePlayer(state) {
 function onMouseMove(event, state) {
     let deltaX = event.clientX - state.prevMouseX
     state.prevMouseX = event.clientX
-    state.movement.yaw.speed += deltaX
+    state.movement.yaw.speed += deltaX * state.movement.yaw.inertialCoef
     
     let deltaY = event.clientY - state.prevMouseY
     state.prevMouseY = event.clientY
-    state.movement.pitch.speed -= deltaY
+    state.movement.pitch.speed -= deltaY * state.movement.pitch.inertialCoef
 }
 
 //--------------------------------------------------------------
@@ -516,11 +516,11 @@ function processAction(type, eventName, state, amount) {
         else continue
         
         if ( type == 'press' ) {
-            movement.acceleration = movement.limit * sign
-        } else if ( type == 'release' && Math.sign(movement.acceleration) == sign ) {
-            movement.acceleration = 0
-        } else {
-            movement.speed += amount * sign * movement.limit
+            movement.targetSpeed = movement.limit * sign
+        } else if ( type == 'release' && Math.sign(movement.targetSpeed) == sign ) {
+            movement.targetSpeed = 0
+        } else if ( type == 'advance' ) {
+            movement.speed += amount * sign * movement.limit * movement.inertialCoef
         }
     }
 }
@@ -535,45 +535,45 @@ function createInitialState() {
             along: {
                 positiveAction: actionBackward,
                 negativeAction: actionForward,
-                inertialCoef: inertialCoef,
+                inertialCoef: 1 / (1 + inertia),
                 limit: maxSpeed,
             },
             side: {
                 positiveAction: actionRight,
                 negativeAction: actionLeft,
-                inertialCoef: inertialCoef,
+                inertialCoef: 1 / (1 + inertia),
                 limit: maxSideSpeed,
             },
             vertical: {
                 positiveAction: actionUp,
                 negativeAction: actionDown,
-                inertialCoef: inertialCoef,
+                inertialCoef: 1 / (1 + inertia),
                 limit: maxVerticalSpeed,
             },
             roll: {
                 positiveAction: actionRollCCW,
                 negativeAction: actionRollCW,
-                inertialCoef: rotationInertialCoef,
+                inertialCoef: 1 / (1 + rotationInertia),
                 limit: maxRollSpeed,
             },
             yaw: {
                 positiveAction: actionYawRight,
                 negativeAction: actionYawLeft,
-                inertialCoef: mouseInertialCoef,
+                inertialCoef: 1 / (1 + mouseInertia),
                 limit: maxYawSpeed / yawSensitivity,
             },
             pitch: {
-                inertialCoef: mouseInertialCoef,
-                limit: maxPitchSpeed / pitchSensitivity,
                 positiveAction: actionPitchUp,
                 negativeAction: actionPitchDown,
+                inertialCoef: 1 / (1 + mouseInertia),
+                limit: maxPitchSpeed / pitchSensitivity,
             },
         }
     }
     
     for ( let movement of Object.values(state.movement) ) {
         movement.speed = 0
-        movement.acceleration = 0
+        movement.targetSpeed = 0
     }
     
     return state
