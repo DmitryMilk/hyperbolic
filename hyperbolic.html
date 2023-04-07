@@ -4,9 +4,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script>
 
+const cubesInEdge = 5
+const globalGridProjHalfStep = Math.tanh(Math.acosh(1/Math.tan(Math.PI/cubesInEdge))) / Math.sqrt(2)
+const globalGridStep = Math.atanh(globalGridProjHalfStep) * 2
+
 const fovToScreen = 30
-const zNear = 5
-const zFar = 1000
+const zNear = 0.05 * globalGridStep
+const zFar = 10 * globalGridStep
 
 const tickRate = 50
 
@@ -29,9 +33,9 @@ const actionPitchDown = ''
 const inertia = 4
 const rotationInertia = 4
 const mouseInertia = 0.5
-const maxSpeed = 0.5
-const maxSideSpeed = 0.1
-const maxVerticalSpeed = 0.2
+const maxSpeed = 0.2 * globalGridStep / tickRate
+const maxSideSpeed = 0.1 * globalGridStep / tickRate
+const maxVerticalSpeed = 0.2 * globalGridStep / tickRate
 const maxRollSpeed = 0.03
 const maxYawSpeed = 0.1
 const maxPitchSpeed = 0.1
@@ -44,26 +48,46 @@ const deltaThreshold = 0.0001
 const msecPerTick = 1000 / tickRate
 
 //--------------------------------------------------------------
-let vertexShaderSrc = `
-attribute vec4 pos;
-attribute vec4 color;
+let vertexShaderSrc = `#version 300 es
 
-uniform mat4 transform;
+in vec4 pos;
+in vec4 color;
 
-varying vec4 f_color;
+uniform mat4 view_matrix;
+uniform mat4 projection_matrix;
+
+out vec4 f_color;
+
+vec4 simple_projection(vec4 A) {
+    return vec4(A.x, A.y, A.z, 1.0) * projection_matrix;
+}
+
+vec4 projection(vec4 A) {
+    float distance_correction = acosh(A.w) / length(A.xyz);
+    return vec4(
+        A.x * distance_correction,
+        A.y * distance_correction,
+        A.z * distance_correction,
+        1.0
+    ) * projection_matrix;
+}
 
 void main() {
-    gl_Position = pos * transform;
+    vec4 A = pos * view_matrix;
+    gl_Position = simple_projection(A);
     f_color = color;
 }
 `
 
 //--------------------------------------------------------------
-let fragmentShaderSrc = `
-varying highp vec4 f_color;
+let fragmentShaderSrc = `#version 300 es
+precision highp float;
+
+out vec4 FragColor;
+in vec4 f_color;
 
 void main() {
-    gl_FragColor = f_color;
+    FragColor = f_color;
 }
 `
 
@@ -75,7 +99,8 @@ let worldProgram = {
     ],
     
     uniforms: {
-        transform: null,
+        view_matrix: null,
+        projection_matrix: null,
     },
     
     vertexSpecification: [
@@ -384,6 +409,17 @@ function scale(mat, sx, sy, sz) {
     mat[10] *= sz
     mat[11] *= sz
 }
+
+//============================================================
+function hyperbolize(v) {
+    let sqrDistance = v[0]*v[0] + v[1]*v[1] + v[2]*v[2]
+    if ( sqrDistance >= 1.0 ) {
+        console.log(`Invalid original vertex: (${v}), distance=${Math.sqrt(sqrDistance)}`)
+    }
+    let norm = 1.0 / Math.sqrt(1.0 - sqrDistance)
+    return [v[0]*norm, v[1]*norm, v[2]*norm, norm]
+}
+
 //============================================================
 class World {
     constructor(program) {
@@ -394,7 +430,7 @@ class World {
         
         let bufferBuilder = new BufferBuilder(program)
         
-        let cubeSize = 0.5
+        let cubeSize = globalGridProjHalfStep
         let buildFace = (axis1, axis2, faceSign, color) => {
             let pos = [0, 0, 0, 1]
             let faceIndices = []
@@ -403,7 +439,7 @@ class World {
                     pos[axis1] = j
                     pos[axis2] = i
                     pos[3 - axis1 - axis2] = cubeSize * faceSign
-                    faceIndices.push(bufferBuilder.addVertex({ pos: pos, color: color }))
+                    faceIndices.push(bufferBuilder.addVertex({ pos: hyperbolize(pos), color: color }))
                 }
             }
             indices.push(faceIndices[0], faceIndices[1], faceIndices[2], faceIndices[2], faceIndices[1], faceIndices[3])
@@ -431,7 +467,8 @@ class World {
         let viewMatrix = new Float32Array(state.viewMatrix)
         
         gl.useProgram(this.program.program)
-        gl.uniformMatrix4fv(this.program.uniforms.transform, false, mulMatrix(viewMatrix, gl.projectionMatrix))
+        gl.uniformMatrix4fv(this.program.uniforms.view_matrix, false, viewMatrix)
+        gl.uniformMatrix4fv(this.program.uniforms.projection_matrix, false, gl.projectionMatrix)
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer)
         gl.drawElements(gl.TRIANGLES, this.N, gl.UNSIGNED_SHORT, 0)
     }
@@ -477,12 +514,9 @@ function movePlayer(state) {
     }
     
     if ( changed ) {
-        translate(
-            state.viewMatrix,
-            -state.movement.side.speed, 
-            -state.movement.vertical.speed,
-            -state.movement.along.speed,
-        )
+        hyperRotate(state.viewMatrix, 0, 3, -state.movement.side.speed)
+        hyperRotate(state.viewMatrix, 1, 3, -state.movement.vertical.speed)
+        hyperRotate(state.viewMatrix, 2, 3, -state.movement.along.speed)
         rotate(state.viewMatrix, 0, 1, -state.movement.roll.speed)
         rotate(state.viewMatrix, 0, 2, -state.movement.yaw.speed * yawSensitivity)
         rotate(state.viewMatrix, 1, 2, -state.movement.pitch.speed * pitchSensitivity)
@@ -594,10 +628,10 @@ function createInitialState() {
 //--------------------------------------------------------------
 function main() {
     let canvas = document.querySelector('#canvas')
-    let gl = canvas.getContext('webgl')
+    let gl = canvas.getContext('webgl2')
     gl.clearColor(0.0, 0.0, 0.0, 1.0)
     gl.enable(gl.DEPTH_TEST)
-    gl.enable(gl.CULL_FACE)
+    // gl.enable(gl.CULL_FACE)
     setupProjection(gl)
     
     buildProgram(gl, worldProgram)
@@ -605,8 +639,6 @@ function main() {
     let world = new World(worldProgram)
     
     let state = createInitialState()
-    
-    translate(state.viewMatrix, 0, 0, -10)
     
     // register event listeners
     
