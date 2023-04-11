@@ -430,27 +430,12 @@ class World {
         
         let bufferBuilder = new BufferBuilder(program)
         
-        let cubeSize = globalGridProjHalfStep
-        let buildFace = (axis1, axis2, faceSign, color) => {
-            let pos = [0, 0, 0, 1]
-            let faceIndices = []
-            for ( const i of [-cubeSize, cubeSize] ) {
-                for ( const j of [-cubeSize, cubeSize] ) {
-                    pos[axis1] = j
-                    pos[axis2] = i
-                    pos[3 - axis1 - axis2] = cubeSize * faceSign
-                    faceIndices.push(bufferBuilder.addVertex({ pos: hyperbolize(pos), color: color }))
-                }
-            }
-            indices.push(faceIndices[0], faceIndices[1], faceIndices[2], faceIndices[2], faceIndices[1], faceIndices[3])
-        }
-        
-        buildFace(0, 1, 1, [1, 0, 0, 1])
-        buildFace(1, 0, -1, [0, 1, 1, 1])
-        buildFace(1, 2, 1, [0, 1, 0, 1])
-        buildFace(2, 1, -1, [1, 0, 1, 1])
-        buildFace(2, 0, 1, [0, 0, 1, 1])
-        buildFace(0, 2, -1, [1, 1, 0, 1])
+        let cubeShift = identity()
+        cube(bufferBuilder, indices, globalGridProjHalfStep-0.001, cubeShift)
+        hyperRotate(cubeShift, 0, 3, globalGridStep)
+        cube(bufferBuilder, indices, globalGridProjHalfStep-0.001, cubeShift)
+        hyperRotate(cubeShift, 1, 3, globalGridStep)
+        cube(bufferBuilder, indices, globalGridProjHalfStep-0.001, cubeShift)
         
         bufferBuilder.uploadData()
         
@@ -472,6 +457,31 @@ class World {
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer)
         gl.drawElements(gl.TRIANGLES, this.N, gl.UNSIGNED_SHORT, 0)
     }
+}
+
+//--------------------------------------------------------------
+function cube(bufferBuilder, indices, size, matrix) {
+    let buildFace = (axis1, axis2, faceSign, color) => {
+        let faceIndices = []
+        for ( const i of [-size, size] ) {
+            for ( const j of [-size, size] ) {
+                let proj = [0, 0, 0, 1]
+                proj[axis1] = j
+                proj[axis2] = i
+                proj[3 - axis1 - axis2] = size * faceSign
+                let pos = applyMatrix(hyperbolize(proj), matrix)
+                faceIndices.push(bufferBuilder.addVertex({ pos: pos, color: color }))
+            }
+        }
+        indices.push(faceIndices[0], faceIndices[1], faceIndices[2], faceIndices[2], faceIndices[1], faceIndices[3])
+    }
+    
+    buildFace(0, 1, 1, [1, 0, 0, 1])
+    buildFace(1, 0, -1, [0, 1, 1, 1])
+    buildFace(1, 2, 1, [0, 1, 0, 1])
+    buildFace(2, 1, -1, [1, 0, 1, 1])
+    buildFace(2, 0, 1, [0, 0, 1, 1])
+    buildFace(0, 2, -1, [1, 1, 0, 1])
 }
 
 //--------------------------------------------------------------
